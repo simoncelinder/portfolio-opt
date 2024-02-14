@@ -6,7 +6,7 @@ or max returns with user specified constraint for volatility.
 ```bash
 python3 -m venv .pyenv 
 source .pyenv/bin/activate  # or source .pyenv/Scripts/activate on windows
-pip install -e .
+pip install -r requirements.txt  # Since streamlit looks for requirements.txt rather than setup.py etc.
 ```
 
 

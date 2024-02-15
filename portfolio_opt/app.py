@@ -156,7 +156,7 @@ with st.form("input_assumptions", clear_on_submit=False):
 
     extra_tickers = st.text_input(
         'Add any extra asset tickers (comma-separated) not listed above matching those available in Yahoo Finance:',
-        value='ARKB, ^GSPC, CL=F, GC=F, SI=F, ^IRX, 051910.KS, 300750.SZ'
+        value='ARKB, ^GSPC, CL=F, GC=F, SI=F, 051910.KS, 300750.SZ'
     )
     extra_tickers_list = [ticker.strip() for ticker in extra_tickers.split(',') if ticker]
 

@@ -91,7 +91,7 @@ companies_pretty = [pretty_name_map[n] for n in companies]
 
 with st.form("input_assumptions", clear_on_submit=False):
 
-    start_date = st.date_input('Asset Data Start Date', value=datetime.date(2012, 1, 1), key='start_date')
+    start_date = st.date_input('Asset Data Start Date', value=datetime.date(2012, 5, 1), key='start_date')
     end_date = st.date_input('Asset Data End Date', value=datetime.date.today(), key='end_date')
     assert end_date > start_date, 'End date must be later than start date'
     selected_stocks = st.multiselect(

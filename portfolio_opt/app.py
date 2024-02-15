@@ -104,9 +104,9 @@ with st.form("input_assumptions", clear_on_submit=False):
     max_std = st.slider(
         'Max allowed portfolio volatility ((portfolio time series / slow moving avg).std())',
         min_value=0.0,
-        max_value=1.0,
-        value=0.03,
-        step=0.01
+        max_value=0.4,
+        value=0.02,
+        step=0.001
     )
 
     selected_symbols = [k for k, v in pretty_name_map.items() if v in selected_stocks]

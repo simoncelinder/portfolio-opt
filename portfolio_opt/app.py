@@ -193,7 +193,7 @@ def join_other_asset(
         pretty_name_map=pretty_name_map,
     ).reset_index()
     if other_df['Date'].min().date() > start_date + datetime.timedelta(days=6):
-        st.caption(f"Skipping asset: {other_df.columns[-1]} due to starts to late, start: {other_df['Date'].min()}")
+        st.caption(f"Skipping asset: {other_df.columns[-1]} due to starts too late, start: {other_df['Date'].min()}")
     else:
         df = pd.merge_asof(df, other_df, on='Date', direction='nearest')
     return df

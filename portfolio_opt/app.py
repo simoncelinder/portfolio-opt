@@ -162,6 +162,32 @@ def merge_small_shares(optimized_shares_dict: dict) -> dict:
 
 st.title('Stock Portfolio Optimizer')
 
+st.write(
+    'This application optimizes portfolio allocation to maximize returns while respecting '
+    'constraints on volatility and maximum asset concentration. The optimizer uses linear '
+    'programming to determine the ideal percentage allocation for each asset, assuming '
+    'continuous rebalancing to maintain constant portfolio weights. Select your assets, '
+    'set your risk tolerance, and discover the optimal portfolio composition.'
+)
+
+st.caption(
+    '**Mathematical approach:** The optimization employs log returns, a best practice in '
+    'quantitative finance due to their superior statistical properties (time-additivity and '
+    'approximate normality). Volatility is calculated using a trend-adjusted method: each '
+    'asset\'s price is normalized by dividing by a slow-moving average, isolating price '
+    'fluctuations around the underlying trend. This ensures that sustained price trends '
+    'don\'t artificially inflate volatility metrics, allowing the optimizer to focus on '
+    'true risk (swings and deviations) rather than penalizing assets with strong directional momentum.'
+)
+
+st.caption(
+    '**Note on data fetching:** Yahoo Finance introduced significantly stricter rate limiting '
+    'in late 2024, which may occasionally cause delays or require retries when fetching asset data. '
+    'The app implements automatic retry logic to handle these limitations but it can still cause problems.'
+)
+
+st.divider()
+
 asset_name_max_chars = 25  # Not to skew plot with super long names eating from lineplot space
 companies = [
     'GC=F', 'NVDA', 'INTC', 'TSM', 'ASML', 'LRCX', 'MU', 'AMAT', 'KLAC', 'AAPL', 'GOOG',

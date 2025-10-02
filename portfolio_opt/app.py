@@ -1,35 +1,43 @@
 import datetime
 import warnings
+import time
 
 import streamlit as st
 import pandas as pd
-from pandas_datareader import data as pdr
+import numpy as np
 import yfinance as yfin
+from curl_cffi import requests as curl_requests
 import scipy.optimize as spo
 import cufflinks as cf
 import plotly.express as px
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
-yfin.pdr_override()
 cf.go_offline()
+
+# Create session with browser spoofing to avoid rate limits
+_yf_session = curl_requests.Session(impersonate='chrome')
 
 
 def adjusted_std(p: pd.Series, periods: int = 52) -> float:
     # Divide with very slow rolling average to scale to stock value and trend,
-    # and capture normalized remaining fluctuation
+    # and capture normalized remaining fluctuation using log returns
+    if p.empty or len(p) < 2:
+        return 0.0
     slow_moving_avg = p.rolling(periods, center=True, min_periods=1).mean()
     scaled_series = (p / slow_moving_avg)
-    return scaled_series.std()
+    # Calculate log returns from the normalized series for better statistical properties
+    log_returns = np.log(scaled_series / scaled_series.shift(1))
+    return log_returns.std()
 
 
-def std_constraint(x):
-    share_of_portfolio = dict(zip(final_stock_names, x))
+def std_constraint(x, df, stock_names, max_std_value):
+    share_of_portfolio = dict(zip(stock_names, x))
     p = stocks_to_portfolio_time_series(
         df=df,
         share_of_portfolio=share_of_portfolio,
     )
     std = adjusted_std(p)
-    std_check = max_std - std
+    std_check = max_std_value - std
     return std_check
 
 
@@ -47,19 +55,25 @@ def stocks_to_portfolio_time_series(
 
 
 def yearly_rolling_returns(s: pd.Series) -> pd.Series:
+    if s.empty or len(s) < 53:
+        return pd.Series(dtype=float)
     returns_df = s.copy().to_frame('value')
     returns_df['yr_shift'] = returns_df['value'].shift(-52)
     returns_df = returns_df.dropna(how='any')
-    returns_df['return'] = (returns_df['yr_shift'] / returns_df['value'] - 1) * 100
+    # Use log returns for better mathematical properties (additive, more normal distribution)
+    returns_df['return'] = np.log(returns_df['yr_shift'] / returns_df['value']) * 100
     return returns_df['return']
 
 
 def portfolio_percent_return(p: pd.Series) -> float:
-    return (p.iloc[-1] / p.iloc[0] - 1) * 100
+    # Use log returns for better mathematical properties
+    if p.empty or len(p) < 2:
+        return 0.0
+    return np.log(p.iloc[-1] / p.iloc[0]) * 100
 
 
-def objective(x):
-    share_of_portfolio = dict(zip(final_stock_names, x))
+def objective(x, df, stock_names):
+    share_of_portfolio = dict(zip(stock_names, x))
     p = stocks_to_portfolio_time_series(
         df=df,
         share_of_portfolio=share_of_portfolio,
@@ -77,14 +91,22 @@ def weights_sum_constraint(x):
 def optimize(
     df: pd.DataFrame,
     asset_max_share: float,
+    max_std_value: float = 0.06,
 ):
-    x0 = [1 / len(df.columns) for _ in range(len(df.columns))]
+    stock_names = list(df.columns)
+    x0 = [1 / len(stock_names) for _ in range(len(stock_names))]
     bounds = [(0, asset_max_share)] * len(x0)
     cons = [
         {'type': 'eq', 'fun': weights_sum_constraint},
-        {'type': 'ineq', 'fun': std_constraint},
+        {'type': 'ineq', 'fun': lambda x: std_constraint(x, df, stock_names, max_std_value)},
     ]
-    result = spo.minimize(objective, x0, method='SLSQP', bounds=bounds, constraints=cons)
+    result = spo.minimize(
+        lambda x: objective(x, df, stock_names),
+        x0,
+        method='SLSQP',
+        bounds=bounds,
+        constraints=cons
+    )
     return result
 
 
@@ -152,30 +174,52 @@ pretty_name_map = {
 }
 
 
+@st.cache_data(ttl=3600)
 def df_for_single_asset(
     start_date: datetime.date,
     end_date: datetime.date,
     ticker: str,
-    pretty_name_map: dict
+    pretty_name: str,
+    max_retries: int = 5,
 ) -> pd.DataFrame:
-    return (
-        pdr.get_data_yahoo(
-            ticker,
-            start=start_date,
-            end=end_date,
-            interval='1wk'
-        )
-        [['Close']]
-        .rename(columns={'Close': pretty_name_map.get(ticker, ticker)})
-    )
+    for attempt in range(max_retries):
+        try:
+            ticker_obj = yfin.Ticker(ticker, session=_yf_session)
+            result = (
+                ticker_obj.history(
+                    start=start_date,
+                    end=end_date,
+                    interval='1wk'
+                )
+                [['Close']]
+                .rename(columns={'Close': pretty_name})
+            )
+            if not result.empty:
+                # Remove timezone info to avoid merge conflicts between different exchanges
+                result.index = result.index.tz_localize(None)
+                return result
+            elif attempt < max_retries - 1:
+                time.sleep(3)
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait_time = 3 + (attempt * 2)
+                time.sleep(wait_time)
+                continue
+    
+    return pd.DataFrame(columns=['Close']).rename(columns={'Close': pretty_name})
 
 
 def add_pretty_name_from_yf_to_dict(pretty_name_map: dict, s: str):
     pretty_name_map = pretty_name_map.copy()
     try:
-        pretty_name_map[s] = yfin.Ticker(s).info['longName'][0:asset_name_max_chars]
-    except Exception as e:
-        print(f"Could not add long name for ticker: {s}, error: {e}")
+        ticker_obj = yfin.Ticker(s, session=_yf_session)
+        info = ticker_obj.info
+        if 'longName' in info and info['longName']:
+            pretty_name_map[s] = info['longName'][0:asset_name_max_chars]
+        elif 'shortName' in info and info['shortName']:
+            pretty_name_map[s] = info['shortName'][0:asset_name_max_chars]
+    except Exception:
+        pass
     return pretty_name_map
 
 
@@ -186,13 +230,16 @@ def join_other_asset(
     ticker: str,
     pretty_name_map: dict,
 ) -> pd.DataFrame:
+    pretty_name = pretty_name_map.get(ticker, ticker)
     other_df = df_for_single_asset(
         start_date=start_date,
         end_date=end_date,
         ticker=ticker,
-        pretty_name_map=pretty_name_map,
+        pretty_name=pretty_name,
     ).reset_index()
-    if other_df['Date'].min().date() > start_date + datetime.timedelta(days=6):
+    if other_df.empty or pd.isna(other_df['Date'].min()):
+        st.caption(f"Skipping asset: {other_df.columns[-1] if len(other_df.columns) > 1 else ticker} due to no data available")
+    elif other_df['Date'].min().date() > start_date + datetime.timedelta(days=6):
         st.caption(f"Skipping asset: {other_df.columns[-1]} due to starts too late, start: {other_df['Date'].min()}")
     else:
         df = pd.merge_asof(df, other_df, on='Date', direction='nearest')
@@ -252,11 +299,12 @@ with st.form("input_assumptions", clear_on_submit=False):
     )
 
     max_std = st.slider(
-        'Max allowed portfolio volatility ((portfolio time series / slow moving avg).std())',
+        'Max allowed portfolio volatility (std of weekly log returns on normalized series)',
         min_value=0.001,
-        max_value=0.300,
-        value=0.060,
-        step=0.001
+        max_value=0.100,
+        value=0.030,
+        step=0.001,
+        help='Log return volatility: ~0.02 (low), ~0.03 (moderate), ~0.04+ (high)'
     )
 
     selected_symbols = list(set(
@@ -270,25 +318,30 @@ with st.form("input_assumptions", clear_on_submit=False):
         for s in selected_symbols + [benchmark_ticker]:
             if s not in pretty_name_map.keys():
                 pretty_name_map = add_pretty_name_from_yf_to_dict(pretty_name_map, s)
+                time.sleep(0.5)
 
+        benchmark_pretty_name = pretty_name_map.get(benchmark_ticker, benchmark_ticker)
         benchmark_df = df_for_single_asset(
             start_date=start_date,
             end_date=end_date,
             ticker=benchmark_ticker,
-            pretty_name_map=pretty_name_map,
+            pretty_name=benchmark_pretty_name,
         ).reset_index()
         benchmark_name = benchmark_df.columns[-1]
+        time.sleep(0.5)
 
         # Since it was found that adding custom tickers can screw up the dataset by their weeks
         # not starting with exact same date, we instead merge to closest match
+        first_pretty_name = pretty_name_map.get(selected_symbols[0], selected_symbols[0])
         df = df_for_single_asset(
                 start_date=start_date,
                 end_date=end_date,
                 ticker=selected_symbols[0],
-                pretty_name_map=pretty_name_map,
+                pretty_name=first_pretty_name,
         ).reset_index()
 
         for ticker in selected_symbols[1:]:
+            time.sleep(0.5)
             df = join_other_asset(
                 df=df,
                 start_date=start_date,
@@ -301,7 +354,7 @@ with st.form("input_assumptions", clear_on_submit=False):
         df = df.set_index('Date')
         final_stock_names = list(df.columns)
 
-        result = optimize(df, asset_max_share)
+        result = optimize(df, asset_max_share, max_std)
         st.caption(f"Optimization outcome (success/fail to find optimum): {result.success}")
 
         # Format outputs - TODO factor out so cleaner
@@ -309,7 +362,7 @@ with st.form("input_assumptions", clear_on_submit=False):
         p_optimized = stocks_to_portfolio_time_series(df=df, share_of_portfolio=optimized_shares_dict)
         r_optimized = portfolio_percent_return(p_optimized)
         std = adjusted_std(p_optimized)
-        performance_optimized = r_optimized / std
+        performance_optimized = r_optimized / std if std != 0 else 0.0
         optimized_shares_dict_w_other = merge_small_shares(optimized_shares_dict)
 
         portf_df = p_optimized.to_frame('Value').reset_index()

@@ -4,15 +4,21 @@ or max returns with user specified constraint for volatility.
 
 Live frontend at: https://portfolio-allocation-optimizer.streamlit.app
 
-## 1. Set up a virtualenv, activate it and install dependencies
+## 1. Set up environment with uv and install dependencies
 ```bash
-python3 -m venv .pyenv 
-source .pyenv/bin/activate  # or source .pyenv/Scripts/activate on windows
-pip install -r requirements.txt  # Since streamlit looks for requirements.txt rather than setup.py etc.
+# Install uv if you haven't already
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create virtual environment and install all dependencies
+uv sync
 ```
 
-
-## 2. If want to open the app / frontend locally
+## 2. Run the app locally
 ```bash
-streamlit run portfolio_opt/app.py
+uv run streamlit run portfolio_opt/app.py
+```
+
+## 3. Running tests
+```bash
+uv run pytest
 ```
